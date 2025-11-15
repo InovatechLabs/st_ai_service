@@ -54,11 +54,11 @@ async def generate_report(request: Request):
     Primeiros valores coletados:
     {valores[:10]}  # apenas amostra
     
-    Faça uma análise que inclua:
-    - A variação de temperatura
-    - Possíveis anomalias ou outliers
-    - Tendência geral (aquecimento, resfriamento, estabilidade)
-    - Sugestão de medidas caso algo fuja do padrão
+    Analise as estatísticas de temperatura fornecidas. Responda apenas com os seguintes 4 pontos,
+    de forma direta e telegráfica (Sem textos introdutórios):
+    - Variação: [Mínima]°C a [Máxima]°C (Delta: [X]°C)
+    - Anomalias: [Não detectadas / Listar valores anômalos]
+    - Tendência: [Aquecimento / Resfriamento / Estável]
     """
     response = client.models.generate_content(
         model="gemini-2.5-flash",
