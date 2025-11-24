@@ -1,9 +1,13 @@
 from fastapi import FastAPI, Request
 from google import genai
+import time
+import random
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import os
 import re
+from google.api_core import exceptions
 
 load_dotenv()
 
@@ -68,7 +72,7 @@ async def generate_report(request: Request):
     
     prompt = f"""
     Gere um relatório médio, claro e sucinto sobre as temperaturas coletadas na estufa com chipId {chip_id}.
-    Intervalo de coleta: {inicio} até {fim}.
+    Intervalo de coleta: {inicio} até {fim}. 
     
     Foram coletados {len(records)} registros de temperatura.
     
@@ -84,16 +88,22 @@ async def generate_report(request: Request):
 - Lista objetiva de estatísticas
 - Curto comentário de tendência observada
 - Curto comentário em cada estatística observada
+- Datas do intervalo fornecido convertidas em fuso BRT -3, limpando a string ISO para apenas o horário.
 
 Escreva de forma analítica e técnica, mantendo consistência numérica.
     """
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt
-    )
-    texto_limpo = clean_text(response.text)
-    return {
-        "relatorio": texto_limpo,
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            
+            texto_limpo = clean_text(response.text)
+            
+            return {
+                "relatorio": texto_limpo,
         "resumo": {
             "intervalo": f"{inicio} → {fim}",
             "registros": len(records),
@@ -108,3 +118,20 @@ Escreva de forma analítica e técnica, mantendo consistência numérica.
             "totalOutliers": statistics.get("totalOutliers")
         }
     }
+        except exceptions.ResourceExhausted as e: 
+            print(f"Cota excedida (Erro 429). Tentativa {attempt + 1} de {max_retries}. Aguardando...")
+            
+            if attempt == max_retries - 1:
+                print("Esgotadas todas as tentativas de cota.")
+                return JSONResponse(status_code=429, content={"erro": "Cota de IA excedida. Tente mais tarde."})
+
+            wait_time = (2 ** attempt) + random.uniform(0, 1)
+            time.sleep(wait_time)
+
+        except Exception as e:
+            print(f"Erro genérico na tentativa {attempt + 1}: {e}")
+
+            if attempt == max_retries - 1:
+                return JSONResponse(status_code=500, content={"erro": f"Erro interno na IA: {str(e)}"})
+
+            time.sleep(1)
