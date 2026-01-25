@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 import os
 import re
 from google.api_core import exceptions
+from groq import Groq
 
 load_dotenv()
 
@@ -21,6 +22,66 @@ app.add_middleware(
     allow_headers=["*"],
 )
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+@app.post("/gerar-laudo-experimento")
+async def generate_experiment_report(request: Request):
+    body = await request.json()
+    records = body.get("records", [])
+    metadata = body.get("metadata", {}) 
+    
+    if not records:
+        return {"erro": "Dados de temperatura ausentes"}
+
+    valores = [r["value"] for r in records if "value" in r]
+    temp_min = metadata.get("min")
+    temp_max = metadata.get("max")
+    objetivo = metadata.get("objetivo")
+    nome = metadata.get("nome")
+
+    # Lógica de estabilidade para o prompt
+    fora_da_faixa = [v for v in valores if v < temp_min or v > temp_max]
+    percentual_estabilidade = ((len(valores) - len(fora_da_faixa)) / len(valores)) * 100
+
+    prompt = f"""
+    Aja como um especialista em biotecnologia. Analise o experimento científico: "{nome}"
+    Objetivo: {objetivo}
+    
+    Parâmetros:
+    - Faixa Ideal: {temp_min}°C a {temp_max}°C
+    - Registros: {len(records)}
+    - Estabilidade: {percentual_estabilidade:.1f}% dentro da faixa.
+    - Extremos: Mín {min(valores)}°C / Máx {max(valores)}°C
+    - NÃO inclua campos de assinatura, nomes fictícios, cargos ou datas ao final.
+    
+    Gere um laudo técnico sucinto confirmando se o ambiente térmico foi adequado para o objetivo proposto.
+    Aponte riscos caso a estabilidade seja baixa. Seja direto e profissional.
+    """
+
+    try:
+        # Chamada para o Groq usando Llama 3
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model="llama-3.3-70b-versatile", # Modelo potente e rápido
+        )
+        
+        laudo_texto = chat_completion.choices[0].message.content
+        
+        return {
+            "laudo": clean_text(laudo_texto),
+            "estatisticas": {
+                "estabilidade": f"{percentual_estabilidade:.1f}%",
+                "total_registros": len(records),
+                "fora_da_faixa": len(fora_da_faixa)
+            }
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"erro": f"Erro no Groq: {str(e)}"})
 
 def clean_text(text: str) -> str:
     if not text:
