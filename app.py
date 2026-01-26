@@ -9,6 +9,7 @@ import os
 import re
 from google.api_core import exceptions
 from groq import Groq
+from groq import InternalServerError, RateLimitError
 
 load_dotenv()
 
@@ -149,19 +150,23 @@ async def generate_report(request: Request):
 - Lista objetiva de estatísticas
 - Curto comentário de tendência observada
 - Curto comentário em cada estatística observada
-- Datas do intervalo fornecido convertidas em fuso BRT -3, limpando a string ISO para apenas o horário.
 
 Escreva de forma analítica e técnica, mantendo consistência numérica.
     """
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt
-            )
+            response = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model="llama-3.3-70b-versatile", # Modelo potente e rápido
+        )
             
-            texto_limpo = clean_text(response.text)
+            texto_limpo = clean_text(response.choices[0].message.content)
             
             return {
                 "relatorio": texto_limpo,
@@ -179,7 +184,7 @@ Escreva de forma analítica e técnica, mantendo consistência numérica.
             "totalOutliers": statistics.get("totalOutliers")
         }
     }
-        except exceptions.ResourceExhausted as e: 
+        except RateLimitError as e: 
             print(f"Cota excedida (Erro 429). Tentativa {attempt + 1} de {max_retries}. Aguardando...")
             
             if attempt == max_retries - 1:
