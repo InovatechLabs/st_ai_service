@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from google import genai
 import time
 import random
@@ -11,7 +11,11 @@ from google.api_core import exceptions
 from groq import Groq
 from groq import InternalServerError, RateLimitError
 
+import jwt
+
 load_dotenv()
+SECRET_KEY = os.getenv("SECRET_KEY") 
+ALGORITHM = "HS256"
 
 app = FastAPI()
 
@@ -25,8 +29,33 @@ app.add_middleware(
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+def validate_internal_token(authorization: str = Header(None)):
+    """
+    Valida o token JWT enviado no Header Authorization: Bearer <token>
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401, 
+            detail="Acesso não autorizado: Token ausente ou formato inválido"
+        )
+
+    token = authorization.split(" ")[1]
+    
+    try:
+        
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("service") != "safetemp-api":
+            raise HTTPException(status_code=403, detail="Serviço de origem não identificado")
+            
+        return payload 
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado (30s de validade excedidos)")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido ou assinatura corrompida")
+
 @app.post("/gerar-laudo-experimento")
-async def generate_experiment_report(request: Request):
+async def generate_experiment_report(request: Request, token_data: dict = Depends(validate_internal_token)):
     body = await request.json()
     records = body.get("records", [])
     metadata = body.get("metadata", {}) 
@@ -68,7 +97,7 @@ async def generate_experiment_report(request: Request):
                     "content": prompt,
                 }
             ],
-            model="llama-3.3-70b-versatile", # Modelo potente e rápido
+            model="llama-3.3-70b-versatile", 
         )
         
         laudo_texto = chat_completion.choices[0].message.content
@@ -111,7 +140,7 @@ def root():
     return {"status": "ok", "message": "Serviço de IA ativo"}
 
 @app.post("/gerar-report")
-async def generate_report(request: Request):
+async def generate_report(request: Request, token_data: dict = Depends(validate_internal_token)):
     body = await request.json()
     records = body.get("records", [])
     statistics = body.get("statistics") or {}
@@ -163,7 +192,7 @@ Escreva de forma analítica e técnica, mantendo consistência numérica.
                     "content": prompt,
                 }
             ],
-            model="llama-3.3-70b-versatile", # Modelo potente e rápido
+            model="llama-3.3-70b-versatile", 
         )
             
             texto_limpo = clean_text(response.choices[0].message.content)
